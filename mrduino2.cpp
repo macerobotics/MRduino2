@@ -3,8 +3,8 @@
   * @file    mrduino2.cpp
   * @author  Mace Robotics (www.macerobotics.com)
   * @Licence MIT Licence
-  * @version 0.4
-  * @date    05/02/2019
+  * @version 0.52
+  * @date    13/02/2019
   * @brief   lib for MRduino2 robot
   *
  *******************************************************************************/
@@ -14,6 +14,23 @@
 #include <math.h>
 #include <assert.h>
 #include "mrduino2.h"
+
+
+
+#define M_2PI M_PI*2
+#define ERR_DIS_SAT 40
+
+// coefficient PID distance
+#define K_PID_R 2
+#define K_PID_L 2
+
+// coefficient PID orientation
+#define KO_PID_R 600
+#define KO_PID_L 600
+
+// maximum speed
+#define MAX_SPEED 50
+#define DIST_MINI 5
 
 static void forwardControl(int speed, int distance);
 static void backControl(int speed, int distance);
@@ -28,9 +45,12 @@ static void turnRightC(int speed, int distance);
 static void turnLeftC(int speed, int distance);
 static float readFloatData();
 static int readData();
+static int saturationCmd(int cmd, int maxSpeed);
 
 static bool s_ledRight = false;
 static bool s_ledLeft = false;
+unsigned int timeout=0;
+
 
 void initRobot()
 {
@@ -170,17 +190,50 @@ String  commande;
  * @param  
  * @retval None
 **********************************************************/
-void MRpinMode(int pin, int mode)
+void MRpinMode(int pin, uint8_t mode)
 {
 String  commande;
-
-  commande = "#PIN," + String(pin) + "," + String(mode) + "!";
+ 
+  if(mode == OUTPUT)
+  {
+	 commande = "#PMOD," + String(pin) + "," + String(0) + "!"; 
+  }
+  else
+  {
+	 commande = "#PMOD," + String(pin) + "," + String(1) + "!";  
+  }
+  
   Serial.println(commande);
 }
 
+
+/**********************************************************
+ * @brief  MRpinWrite
+ * @param  
+ * @retval None
+**********************************************************/
 void MRpinWrite(int pin, int state)
 {
+String  commande;
 
+  commande = "#PINW," + String(pin) + "," + String(state) + "!";
+  Serial.println(commande);
+}
+
+
+/**********************************************************
+ * @brief  MRpinRead
+ * @param  
+ * @retval None
+**********************************************************/
+bool MRpinRead(int pin)
+{
+String  commande;
+
+  commande = "#PINR," + String(pin) + "!";
+  Serial.println(commande);
+  
+  return(readData());
 }
 
 
@@ -225,7 +278,6 @@ void forward_mm(int speed, int distance)
 {
   controlEnable();
   forwardC(speed, distance*4);
-  controlDisable();
 }
 
 
@@ -259,7 +311,7 @@ void back_mm(int speed, int distance)
 {
   controlEnable();
   backC(speed, distance*4);
-  controlDisable();
+  //controlDisable();
 }
 
 
@@ -509,7 +561,7 @@ float angle_Consigne;
 
 /**********************************************************
  * @brief  robotPositionX
- * @param  
+ * @param  return millimeter 
  * @retval None
 **********************************************************/
 float robotPositionX()
@@ -519,13 +571,13 @@ String  commande;
   commande = "#POX!";
   Serial.println(commande); 
   
-  return(readFloatData());
+  return(readFloatData()/4);
 
 }
 
 /**********************************************************
  * @brief  robotPositionY
- * @param  None
+ * @param  return millimeter 
  * @retval None
 **********************************************************/
 float robotPositionY()
@@ -535,7 +587,7 @@ String  commande;
   commande = "#POY!";
   Serial.println(commande); 
   
-  return(-readFloatData());
+  return(-readFloatData()/4);
 
 }
 
@@ -557,112 +609,117 @@ String  commande;
 
 
 /**********************************************************
- * @brief  robotGo
- * @param coordonner X and coordonner Y
+ * @brief  motorRightSpeed
+ * @param  None
  * @retval None
 **********************************************************/
-/*void robotGo(int speed, int coord_X, int coord_Y)
+float motorRightSpeed()
 {
-int distance;
-float temp;
-float angle, angle_Robot;
-float coord_X_Robot, coord_Y_Robot;
-float coord_X_Goal, coord_Y_Goal;
-
-  controlEnable();
-
-
-  // read actual robot position
-  coord_X_Robot = robotPositionX();
-  coord_Y_Robot = robotPositionY();
+String  commande;
+ 
+  commande = "#MRS!";
+  Serial.println(commande); 
   
-  // read actual robot position
-  angle_Robot = robotPositionOrientation();
+  return(readFloatData());
+}
+
+
+/**********************************************************
+ * @brief  motorLeftSpeed
+ * @param  None
+ * @retval None
+**********************************************************/
+float motorLeftSpeed()
+{
+String  commande;
+ 
+  commande = "#MLS!";
+  Serial.println(commande); 
   
-  // conversion en degree
-  angle_Robot = (angle_Robot*180.0)/(3.14);
-  
-  // calcul goal coordonner
-  coord_X_Goal = (float)(coord_X - coord_X_Robot);
-  coord_Y_Goal = (float)(coord_Y - coord_Y_Robot);
+  return(readFloatData());
+}
 
-  if(coord_Y_Goal > 0)
-  {
 
-    distance = sqrt(coord_X_Goal*coord_X_Goal + coord_Y_Goal*coord_Y_Goal);
-	temp = (float)((float)coord_X_Goal/(float)distance);
-	
-	if(temp > 1.0)
-	{
-	  temp = 1.0;
-	}
-	   
-	if(temp < -1.0)
-	{
-	  temp = -1.0;
-	}
-	   
-    angle = acos(temp);
-  }
-  else
-  {
-    if(coord_X_Goal > 0)
-    {
+/**********************************************************
+ * @brief  robotGo
+ * @param  
+   coordonner X and coordonner Y
+ * @retval None
+**********************************************************/
+bool robotGo(int Maxspeed, int coord_X, int coord_Y)
+{
+float posA, posX, posY;
+float consigneDistance=0, consigneOrientation=0;
+float erreurDistance=0, erreurOrientation=0;
+int cmdMoteurRight=0, cmdMoteurLeft=0;	
+bool robotGo_state = false;
+int speedRight, speedLeft;
+const unsigned int MAX_TIMEOUT = 100;
 
-      distance = sqrt(coord_X_Goal*coord_X_Goal + coord_Y_Goal*coord_Y_Goal);
-	  temp = (float)((float)coord_Y_Goal/(float)distance);
+		posX = robotPositionX();
+		posY = robotPositionY();
+		posA = robotPositionOrientation();
+		
+		// calcul de la distance à parcourir
+		consigneDistance = sqrt( pow(coord_X-posX,2)+pow(coord_Y-posY,2) );
+		
+		// calcul de l'orientation de consigne du robot
+		consigneOrientation = atan2( coord_Y-posY, coord_X-posX);
+		
+		// calcul erreur en distance
+		erreurDistance = consigneDistance;
+		if(erreurDistance > ERR_DIS_SAT) erreurDistance = ERR_DIS_SAT;
+		
+		// calcul erreur en orientation
+		erreurOrientation = consigneOrientation - posA;
+		if(erreurOrientation > M_PI) erreurOrientation -= M_2PI;
+		if(erreurOrientation < -M_PI) erreurOrientation += M_2PI;
+		
+		if(erreurDistance > DIST_MINI)
+		{
+			// calcul des commandes
+			cmdMoteurRight = erreurDistance*K_PID_R + erreurOrientation*KO_PID_R;
+			cmdMoteurLeft = erreurDistance*K_PID_L - erreurOrientation*KO_PID_L;
+			
+			// saturation de la commande
+			cmdMoteurRight = saturationCmd(cmdMoteurRight, Maxspeed);
+			cmdMoteurLeft = saturationCmd(cmdMoteurLeft, Maxspeed);
+			
+			// gestion du sens de rotation des moteurs
+			if(cmdMoteurRight < 0 ) motorRight(abs(cmdMoteurRight), 1);
+			else motorRight(abs(cmdMoteurRight), 0);  
+			
+			if(cmdMoteurLeft < 0 ) motorLeft(abs(cmdMoteurLeft), 1);
+			else motorLeft(abs(cmdMoteurLeft), 0);  
+			
+			
+			speedRight = motorRightSpeed();
+			speedLeft = motorLeftSpeed();
+			
+			if((speedRight == 0)and(speedLeft == 0)and(timeout > 2))
+			{
+				stop();
+				robotGo_state = true;
+				timeout = 0;
+			}
+			
+			timeout++;
+
+		} 
+		else
+		{
+			stop();
+			robotGo_state = true;
+			timeout = 0;
+			
+		}
+		
+		delay(50);
+		
+		return(robotGo_state);
 	  
-	  	if(temp > 1.0)
-	   {
-	     temp = 1.0;
-	   }
-	   
-	   if(temp < -1.0)
-	   {
-	     temp = -1.0;
-	   }
-	   
-	   
-      angle = asin(temp);
-    }
-    else
-    {
-
-      distance = sqrt(coord_X_Goal*coord_X_Goal + coord_Y_Goal*coord_Y_Goal);
-	  temp = (float)((float)coord_X_Goal/(float)distance);
-	  
-	   if(temp > 1.0)
-	   {
-	     temp = 1.0;
-	   }
-	   
-	   if(temp < -1.0)
-	   {
-	     temp = -1.0;
-	   }
-	      
-	  temp = asin(temp);
-
-      angle = -(1.5707 - temp);
-    }
-
-  }
-
-  // conversion en degree
-  angle = (angle*180.0)/(3.14);
-
-  if(angle < 0)
-  {
-	  angle = angle + 360;
-  }
-
-  turn_degree(speed,angle); 
-	
-  forward_mm(speed, distance);
   
-  //controlDisable();
-  
-}*/
+}
 
 
 /**********************************************************
@@ -710,6 +767,20 @@ String  commande;
     Serial.println(commande); 
 	s_ledRight = false;
   }
+}
+
+
+/**********************************************************
+ * @brief  servo_write
+ * @param  angle 0 to 200°
+ * @retval None
+**********************************************************/
+void servo_write(int angle)
+{
+String  commande;	
+
+  commande = "#SER," + String(angle) + "!";
+  Serial.println(commande); 
 }
 
 //*********************************************************************/
@@ -984,6 +1055,23 @@ String readString;
   }    
 
   return readString.toInt();
+}
+
+
+// fonction de saturation des commandes moteurs
+static int saturationCmd(int cmd, int maxSpeed)
+{
+  if(cmd > maxSpeed)
+  {
+    cmd = maxSpeed;
+  }
+
+  if(cmd < -maxSpeed)
+  {
+    cmd = -maxSpeed;
+  }
+
+  return(cmd);
 }
 
 // end file

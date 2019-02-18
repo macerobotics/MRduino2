@@ -3,14 +3,17 @@
   * @file    mrduino2.h
   * @author  Mace Robotics (www.macerobotics.com)
   * @Licence MIT Licence
-  * @version 0.4
-  * @date    05/02/2019
+  * @version 0.52
+  * @date    13/02/2019
   * @brief   lib for MRduino2 robot
   *
  *******************************************************************************/
 
 #ifndef _MRduino2_H
 #define _MRduino2_H
+
+#define FREE_GPIO1 0 // PD2
+#define FREE_GPIO2 1 // PD3
 
 // init robot
 void initRobot();
@@ -50,7 +53,7 @@ void forwardmm(int speed, int distance);  // no pulling function
 void back_mm(int speed, int distance);    // pulling function
 void backmm(int speed, int distance);     // no pulling function
 void stop();
-//void robotGo(int speed, int coord_X, int coord_Y);
+bool robotGo(int Maxspeed, int coord_X, int coord_Y);
 
 // turn degree
 void turnRight_degree(int speed, unsigned int angle); // pulling function
@@ -62,13 +65,21 @@ float robotPositionX();
 float robotPositionY();
 float robotPositionOrientation();
 
+// speed robot : return the real speed of the robot
+float motorRightSpeed();
+float motorLeftSpeed();
+
 // encoder
 int encoderLeft();
 int encoderRight();
 
 // free gpio
-void MRpinMode(int pin, int mode);
+void MRpinMode(int pin, uint8_t mode);
 void MRpinWrite(int pin, int state);
+bool MRpinRead(int pin);
+
+// servomotor control (PA6)
+void servo_write(int angle);
 
 // reset
 void resetUc();
