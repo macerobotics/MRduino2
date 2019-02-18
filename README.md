@@ -1,4 +1,4 @@
 # MRduino2
-MRduino2 robot
+Arduino library for MRduino2 robot.
 
 MIT Licence
